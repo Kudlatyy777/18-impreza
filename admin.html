@@ -14,14 +14,13 @@ h1{margin:0 0 8px;font-size:38px} .muted{color:var(--muted)}
 .card{margin-top:20px;background:var(--card);border:1px solid var(--line);border-radius:22px;padding:18px}
 .row{display:flex;gap:10px;flex-wrap:wrap}
 input{flex:1;min-width:240px;background:var(--card2);border:1px solid var(--line);color:#fff;border-radius:14px;padding:13px}
-button,a.btn{border:1px solid var(--line);background:var(--card2);color:#fff;border-radius:13px;padding:11px 14px;font-weight:800;text-decoration:none;cursor:pointer}
+button{border:1px solid var(--line);background:var(--card2);color:#fff;border-radius:13px;padding:11px 14px;font-weight:800;cursor:pointer}
 button.danger{background:#32191d;border-color:#633039;color:#ffb0b0}
 .gallery{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:20px}
 .item{background:var(--card);border:1px solid var(--line);border-radius:16px;overflow:hidden}
 .item img{width:100%;aspect-ratio:1/1;object-fit:cover;display:block}
 .meta{padding:10px} .meta small{display:block;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:8px}
 .status{margin-top:12px;color:var(--muted)} .ok{color:var(--ok)} .err{color:#ff9d9d}
-.backend-frame{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;border:0}
 @media(min-width:760px){.gallery{grid-template-columns:repeat(4,1fr)}}
 </style>
 </head>
@@ -42,59 +41,36 @@ button.danger{background:#32191d;border-color:#633039;color:#ffb0b0}
 <section id="gallery" class="gallery"></section>
 </main>
 
-<iframe id="galleryFrame" class="backend-frame" title="backend"></iframe>
-<iframe id="adminFrame" name="adminFrame" class="backend-frame" title="admin"></iframe>
-
 <script>
-const API_URL = "https://script.google.com/macros/s/AKfycby-FpvrZis2WLrO_TZJrZADTcJKA4NX8mVuNId53hehiYw83qW3apd_6yf0jiizubHc4A/exec";
+const API = "https://18-impreza-api.kubaozek.workers.dev";
 const inputKey = document.getElementById('adminKey');
-const galleryFrame = document.getElementById('galleryFrame');
 const statusBox = document.getElementById('status');
 const gallery = document.getElementById('gallery');
 
 let photos = [];
-let pending = new Map();
-let galleryTimer = null;
 
 inputKey.value = sessionStorage.getItem('partyAdminKey') || '';
-
-window.addEventListener('message', (event) => {
-  const d = event.data || {};
-
-  if (d.type === 'partyGallery') {
-    clearTimeout(galleryTimer);
-    if (!d.ok) {
-      setStatus(d.error || 'Błąd galerii', 'err');
-      return;
-    }
-    photos = d.photos || [];
-    render();
-    setStatus(`Zdjęć: ${photos.length}`, 'ok');
-    return;
-  }
-
-  if (d.type === 'partyAdmin' && d.token && pending.has(d.token)) {
-    const h = pending.get(d.token);
-    pending.delete(d.token);
-    d.ok ? h.resolve(d) : h.reject(new Error(d.error || 'Błąd operacji.'));
-  }
-});
 
 function saveKey() {
   sessionStorage.setItem('partyAdminKey', inputKey.value.trim());
   setStatus('Klucz zapisany na czas tej sesji.', 'ok');
 }
 
-function loadGallery() {
-  clearTimeout(galleryTimer);
+async function loadGallery() {
   setStatus('Ładowanie galerii…');
 
-  galleryFrame.src = 'about:blank';
+  try {
+    const res = await fetch(API + '/gallery', {cache:'no-store'});
+    const data = await res.json();
 
-  setTimeout(() => {
-    galleryFrame.src = API_URL + '#admin-gallery-' + Date.now();
-    galleryTimer = setTimeout(() => setStatus('Backend nie odpowiedział.', 'err'), 12000);
-  }, 80);
+    if (!res.ok || !data.ok) throw new Error(data.error || 'Błąd galerii.');
+
+    photos = data.photos || [];
+    render();
+    setStatus(`Zdjęć: ${photos.length}`, 'ok');
+  } catch (e) {
+    setStatus(e.message || String(e), 'err');
+  }
 }
 
 function render() {
@@ -134,64 +110,30 @@ function render() {
 
 async function deleteOne(fileId) {
   if (!confirm('Usunąć to zdjęcie?')) return;
+
+  const adminKey = inputKey.value.trim();
+  if (!adminKey) {
+    setStatus('Wpisz klucz administratora.', 'err');
+    return;
+  }
+
   try {
     setStatus('Usuwanie…');
-    await adminPost('delete', {fileId});
+
+    const res = await fetch(API + '/delete', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({adminKey,fileId})
+    });
+
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || 'Nie udało się usunąć zdjęcia.');
+
     setStatus('Zdjęcie usunięte.', 'ok');
-    setTimeout(loadGallery, 500);
+    await loadGallery();
   } catch (e) {
-    setStatus(e.message || e, 'err');
+    setStatus(e.message || String(e), 'err');
   }
-}
-
-function adminPost(action, extra) {
-  return new Promise((resolve, reject) => {
-    const adminKey = inputKey.value.trim();
-    if (!adminKey) {
-      reject(new Error('Wpisz klucz administratora.'));
-      return;
-    }
-
-    const token = 'adm_' + Date.now() + '_' + Math.random().toString(36).slice(2);
-
-    const form = document.createElement('form');
-    form.method = 'POST';
-    form.action = API_URL;
-    form.target = 'adminFrame';
-    form.style.display = 'none';
-
-    const fields = {
-      action,
-      responseType: 'partyAdmin',
-      token,
-      adminKey,
-      ...extra
-    };
-
-    Object.entries(fields).forEach(([k,v]) => {
-      const el = document.createElement('input');
-      el.type = 'hidden';
-      el.name = k;
-      el.value = String(v ?? '');
-      form.appendChild(el);
-    });
-
-    document.body.appendChild(form);
-
-    const timeout = setTimeout(() => {
-      if (!pending.has(token)) return;
-      pending.delete(token);
-      form.remove();
-      reject(new Error('Backend nie odpowiedział.'));
-    }, 30000);
-
-    pending.set(token, {
-      resolve: (v) => {clearTimeout(timeout);form.remove();resolve(v)},
-      reject: (e) => {clearTimeout(timeout);form.remove();reject(e)}
-    });
-
-    form.submit();
-  });
 }
 
 function setStatus(text, type='') {

@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0d1016">
+<title>18!!! 🎉 — wspólna galeria</title>
+<style>
+:root{--bg:#0d1016;--card:#171b23;--card2:#1e2430;--line:#2d3440;--text:#fff;--muted:#aab2c0;--ok:#7ee787;--err:#ff8a8a}
+*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(circle at 15% 0%,rgba(255,255,255,.08),transparent 28%),var(--bg);color:var(--text);font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;min-height:100vh}
+.wrap{width:min(100%,920px);margin:auto;padding:26px 15px 55px}
+.hero{text-align:center;padding:22px 0 18px}
+.tag{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:7px 11px;color:var(--muted);font-size:13px}
+h1{font-size:clamp(42px,11vw,76px);line-height:.95;margin:15px 0 8px;letter-spacing:-.05em}
+.date{font-weight:800;margin-bottom:12px}
+.sub{max-width:590px;margin:auto;color:var(--muted);line-height:1.5}
+.card{background:rgba(23,27,35,.96);border:1px solid var(--line);border-radius:24px;padding:18px;box-shadow:0 25px 90px rgba(0,0,0,.22)}
+.name{width:100%;background:var(--card2);border:1px solid var(--line);color:#fff;border-radius:15px;padding:14px 15px;outline:none}
+.drop{margin-top:12px;border:1.5px dashed #465061;border-radius:20px;padding:30px 18px;text-align:center;min-height:185px;display:grid;place-items:center}
+.plus{margin:auto auto 12px;background:#fff;color:#111;width:56px;height:56px;border-radius:17px;display:grid;place-items:center;font-size:30px;font-weight:500}
+.drop strong{font-size:18px;display:block;margin-bottom:6px}
+.drop small{color:var(--muted);line-height:1.45}
+.btn{width:100%;border:0;border-radius:15px;background:#fff;color:#111;padding:15px;font-weight:900;font-size:16px;margin-top:12px}
+.btn:disabled{opacity:.45}
+.status{display:none;margin-top:12px;padding:12px 14px;background:#10141b;border-radius:13px;color:var(--muted);line-height:1.45}
+.status.show{display:block} .status.ok{color:var(--ok)} .status.err{color:var(--err)}
+.progress{height:7px;background:#2c3440;border-radius:999px;overflow:hidden;margin-top:10px;display:none}
+.progress.show{display:block} .bar{height:100%;width:0;background:#fff;transition:width .25s}
+.head{display:flex;align-items:end;justify-content:space-between;gap:12px;margin:30px 2px 13px}
+.head h2{margin:0;font-size:24px} .head p{margin:4px 0 0;color:var(--muted);font-size:14px}
+.refresh{border:1px solid var(--line);background:var(--card2);color:#fff;border-radius:13px;padding:10px 13px;font-weight:800}
+.gallery{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+.tile{aspect-ratio:1/1;border-radius:15px;overflow:hidden;background:#171b23;border:1px solid var(--line)}
+.tile img{width:100%;height:100%;object-fit:cover;display:block}
+.empty{grid-column:1/-1;padding:32px 18px;text-align:center;border:1px dashed var(--line);border-radius:18px;color:var(--muted)}
+footer{text-align:center;color:#697382;font-size:12px;margin-top:35px}
+@media(min-width:720px){.gallery{grid-template-columns:repeat(4,1fr);gap:10px}.card{padding:22px}}
+</style>
+</head>
+<body>
+<main class="wrap">
+<section class="hero">
+<div class="tag">📸 Wspólna galeria</div>
+<h1>18!!! 🎉</h1>
+<div class="date">18.09.2026</div>
+<p class="sub">Zrobiłeś fajne zdjęcie? Wrzuć je tutaj. Bez aplikacji, bez konta i bez logowania.</p>
+</section>
+
+<section class="card">
+<input id="guestName" class="name" maxlength="80" placeholder="Twoje imię (opcjonalnie)">
+<input id="photos" type="file" accept="image/*" multiple hidden>
+<div id="drop" class="drop">
+  <div>
+    <div class="plus">+</div>
+    <strong id="dropTitle">Dodaj zdjęcia z imprezy</strong>
+    <small>Dotknij tutaj i wybierz zdjęcia z telefonu. Możesz wybrać kilka naraz.</small>
+  </div>
+</div>
+<button id="uploadBtn" class="btn" disabled>Wrzuć zdjęcia</button>
+<div id="progress" class="progress"><div id="bar" class="bar"></div></div>
+<div id="status" class="status"></div>
+</section>
+
+<div class="head">
+  <div><h2>Zdjęcia gości</h2><p id="count">Ładowanie galerii…</p></div>
+  <button class="refresh" onclick="loadGallery()">Odśwież</button>
+</div>
+<section id="gallery" class="gallery"><div class="empty">Ładowanie…</div></section>
+<footer>Zdjęcia zapisują się na Google Drive organizatora</footer>
+</main>
+
+<script>
+const API_URL = "https://script.google.com/macros/s/AKfycby-FpvrZis2WLrO_TZJrZADTcJKA4NX8mVuNId53hehiYw83qW3apd_6yf0jiizubHc4A/exec";
+const ACCESS_KEY = "party-llRKXdaGKf";
+
+let selectedFiles = [];
+const input = document.getElementById('photos');
+const drop = document.getElementById('drop');
+const title = document.getElementById('dropTitle');
+const uploadBtn = document.getElementById('uploadBtn');
+const statusBox = document.getElementById('status');
+const progress = document.getElementById('progress');
+const bar = document.getElementById('bar');
+const guestName = document.getElementById('guestName');
+
+guestName.value = localStorage.getItem('partyName') || '';
+guestName.addEventListener('input', () => localStorage.setItem('partyName', guestName.value.trim()));
+
+drop.addEventListener('click', () => input.click());
+input.addEventListener('change', () => setFiles(Array.from(input.files || [])));
+
+function setFiles(files) {
+  selectedFiles = files.filter(f => (f.type || '').startsWith('image/'));
+  uploadBtn.disabled = selectedFiles.length === 0;
+  title.textContent = selectedFiles.length
+    ? `Wybrano ${selectedFiles.length} ${selectedFiles.length === 1 ? 'zdjęcie' : 'zdjęć'}`
+    : 'Dodaj zdjęcia z imprezy';
+  showStatus('');
+}
+
+uploadBtn.addEventListener('click', uploadAll);
+
+async function uploadAll() {
+  if (!selectedFiles.length) return;
+  uploadBtn.disabled = true;
+  input.disabled = true;
+  progress.classList.add('show');
+  bar.style.width = '0%';
+
+  let done = 0;
+  try {
+    for (let i = 0; i < selectedFiles.length; i++) {
+      const file = selectedFiles[i];
+      showStatus(`Przygotowuję ${i+1} z ${selectedFiles.length}: ${file.name}`);
+      const prepared = await prepareImage(file);
+
+      showStatus(`Wysyłam ${i+1} z ${selectedFiles.length}…`);
+      await postToAppsScript({
+        key: ACCESS_KEY,
+        data: prepared.dataUrl,
+        name: prepared.name,
+        mime: prepared.mime,
+        guestName: guestName.value.trim()
+      });
+
+      done++;
+      bar.style.width = Math.round(done / selectedFiles.length * 100) + '%';
+    }
+
+    showStatus(`Gotowe — dodano ${done} ${done === 1 ? 'zdjęcie' : 'zdjęć'} ✅`, 'ok');
+    selectedFiles = [];
+    input.value = '';
+    title.textContent = 'Dodaj zdjęcia z imprezy';
+    setTimeout(loadGallery, 1200);
+  } catch (err) {
+    showStatus('Nie udało się wysłać zdjęcia: ' + (err.message || err), 'err');
+  } finally {
+    input.disabled = false;
+    uploadBtn.disabled = selectedFiles.length === 0;
+    setTimeout(() => progress.classList.remove('show'), 1400);
+  }
+}
+
+async function prepareImage(file) {
+  const original = await readAsDataUrl(file);
+
+  try {
+    const img = await loadImage(original);
+    const maxSide = 2200;
+    const scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
+    const w = Math.max(1, Math.round(img.naturalWidth * scale));
+    const h = Math.max(1, Math.round(img.naturalHeight * scale));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d', {alpha:false});
+    ctx.drawImage(img, 0, 0, w, h);
+
+    return {
+      dataUrl: canvas.toDataURL('image/jpeg', .86),
+      mime: 'image/jpeg',
+      name: file.name.replace(/\.[^.]+$/, '') + '.jpg'
+    };
+  } catch (e) {
+    if (file.size > 20 * 1024 * 1024) throw new Error('Zdjęcie przekracza 20 MB.');
+    return {dataUrl: original, mime: file.type || 'image/jpeg', name: file.name};
+  }
+}
+
+function readAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = () => reject(new Error('Nie udało się odczytać zdjęcia.'));
+    r.readAsDataURL(file);
+  });
+}
+
+function loadImage(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+}
+
+function postToAppsScript(fields) {
+  return new Promise((resolve, reject) => {
+    const frameName = 'upload_' + Date.now() + '_' + Math.random().toString(36).slice(2);
+    const iframe = document.createElement('iframe');
+    iframe.name = frameName;
+    iframe.style.display = 'none';
+
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = API_URL;
+    form.target = frameName;
+    form.style.display = 'none';
+    form.enctype = 'application/x-www-form-urlencoded';
+
+    Object.entries(fields).forEach(([k,v]) => {
+      const inp = document.createElement('input');
+      inp.type = 'hidden';
+      inp.name = k;
+      inp.value = v == null ? '' : String(v);
+      form.appendChild(inp);
+    });
+
+    let submitted = false;
+    let timer;
+
+    iframe.onload = () => {
+      if (!submitted) return;
+      clearTimeout(timer);
+      setTimeout(() => {
+        iframe.remove();
+        form.remove();
+        resolve();
+      }, 250);
+    };
+
+    document.body.appendChild(iframe);
+    document.body.appendChild(form);
+
+    setTimeout(() => {
+      submitted = true;
+      form.submit();
+      timer = setTimeout(() => {
+        iframe.remove();
+        form.remove();
+        reject(new Error('Przekroczono czas wysyłania.'));
+      }, 45000);
+    }, 120);
+  });
+}
+
+function loadGallery() {
+  const gallery = document.getElementById('gallery');
+  const count = document.getElementById('count');
+  const cb = 'galleryCb_' + Date.now() + '_' + Math.random().toString(36).slice(2);
+  const script = document.createElement('script');
+
+  let finished = false;
+  const timer = setTimeout(() => {
+    if (finished) return;
+    finished = true;
+    cleanup();
+    count.textContent = 'Nie udało się połączyć z galerią';
+    gallery.innerHTML = '<div class="empty">Spróbuj odświeżyć za chwilę.</div>';
+  }, 12000);
+
+  function cleanup() {
+    clearTimeout(timer);
+    try { delete window[cb]; } catch(e) {}
+    script.remove();
+  }
+
+  window[cb] = payload => {
+    if (finished) return;
+    finished = true;
+    cleanup();
+
+    if (!payload || !payload.ok) {
+      count.textContent = 'Błąd ładowania';
+      gallery.innerHTML = '<div class="empty">Nie udało się wczytać galerii.</div>';
+      return;
+    }
+
+    const photos = payload.photos || [];
+    count.textContent = photos.length
+      ? `${photos.length} ${photos.length === 1 ? 'zdjęcie' : 'zdjęć'}`
+      : 'Jeszcze nikt nic nie dodał';
+
+    if (!photos.length) {
+      gallery.innerHTML = '<div class="empty">Pierwsze zdjęcie może być Twoje 🙂</div>';
+      return;
+    }
+
+    gallery.innerHTML = '';
+    photos.forEach(p => {
+      const div = document.createElement('div');
+      div.className = 'tile';
+      const img = document.createElement('img');
+      img.loading = 'lazy';
+      img.alt = 'Zdjęcie z imprezy';
+      img.src = p.thumbUrl;
+      div.appendChild(img);
+      gallery.appendChild(div);
+    });
+  };
+
+  script.onerror = () => {
+    if (finished) return;
+    finished = true;
+    cleanup();
+    count.textContent = 'Błąd połączenia';
+    gallery.innerHTML = '<div class="empty">Nie udało się połączyć z galerią.</div>';
+  };
+
+  script.src = API_URL +
+    '?action=gallery&key=' + encodeURIComponent(ACCESS_KEY) +
+    '&callback=' + encodeURIComponent(cb) +
+    '&_=' + Date.now();
+
+  document.body.appendChild(script);
+}
+
+function showStatus(text, type='') {
+  statusBox.className = 'status' + (text ? ' show' : '') + (type ? ' ' + type : '');
+  statusBox.textContent = text;
+}
+
+loadGallery();
+</script>
+</body>
+</html>

@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0d1016">
+<title>Panel administratora — 18!!!</title>
+<style>
+:root{--bg:#0d1016;--card:#171b23;--card2:#1e2430;--line:#2d3440;--text:#fff;--muted:#aab2c0;--danger:#ff6b6b;--ok:#7ee787}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif}
+.wrap{width:min(100%,1050px);margin:auto;padding:28px 15px 60px}
+h1{margin:0 0 8px;font-size:38px} .muted{color:var(--muted)}
+.card{margin-top:20px;background:var(--card);border:1px solid var(--line);border-radius:22px;padding:18px}
+.row{display:flex;gap:10px;flex-wrap:wrap}
+input{flex:1;min-width:240px;background:var(--card2);border:1px solid var(--line);color:#fff;border-radius:14px;padding:13px}
+button,a.btn{border:1px solid var(--line);background:var(--card2);color:#fff;border-radius:13px;padding:11px 14px;font-weight:800;text-decoration:none;cursor:pointer}
+button.danger{background:#32191d;border-color:#633039;color:#ffb0b0}
+.gallery{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:20px}
+.item{background:var(--card);border:1px solid var(--line);border-radius:16px;overflow:hidden}
+.item img{width:100%;aspect-ratio:1/1;object-fit:cover;display:block}
+.meta{padding:10px} .meta small{display:block;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:8px}
+.status{margin-top:12px;color:var(--muted)} .ok{color:var(--ok)} .err{color:#ff9d9d}
+.backend-frame{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;border:0}
+@media(min-width:760px){.gallery{grid-template-columns:repeat(4,1fr)}}
+</style>
+</head>
+<body>
+<main class="wrap">
+<h1>Panel administratora</h1>
+<div class="muted">Galeria 18!!! 🎉</div>
+
+<section class="card">
+  <div class="row">
+    <input id="adminKey" type="password" placeholder="Klucz administratora">
+    <button onclick="saveKey()">Zapamiętaj na tym urządzeniu</button>
+    <button onclick="loadGallery()">Odśwież</button>
+    <button class="danger" onclick="deleteAll()">Usuń wszystkie zdjęcia</button>
+  </div>
+  <div id="status" class="status">Ładowanie galerii…</div>
+</section>
+
+<section id="gallery" class="gallery"></section>
+</main>
+
+<iframe id="galleryFrame" class="backend-frame" title="backend"></iframe>
+<iframe id="adminFrame" name="adminFrame" class="backend-frame" title="admin"></iframe>
+
+<script>
+const API_URL = "https://script.google.com/macros/s/AKfycby-FpvrZis2WLrO_TZJrZADTcJKA4NX8mVuNId53hehiYw83qW3apd_6yf0jiizubHc4A/exec";
+const inputKey = document.getElementById('adminKey');
+const galleryFrame = document.getElementById('galleryFrame');
+const statusBox = document.getElementById('status');
+const gallery = document.getElementById('gallery');
+
+let photos = [];
+let pending = new Map();
+let galleryTimer = null;
+
+inputKey.value = sessionStorage.getItem('partyAdminKey') || '';
+
+window.addEventListener('message', (event) => {
+  const d = event.data || {};
+
+  if (d.type === 'partyGallery') {
+    clearTimeout(galleryTimer);
+    if (!d.ok) {
+      setStatus(d.error || 'Błąd galerii', 'err');
+      return;
+    }
+    photos = d.photos || [];
+    render();
+    setStatus(`Zdjęć: ${photos.length}`, 'ok');
+    return;
+  }
+
+  if (d.type === 'partyAdmin' && d.token && pending.has(d.token)) {
+    const h = pending.get(d.token);
+    pending.delete(d.token);
+    d.ok ? h.resolve(d) : h.reject(new Error(d.error || 'Błąd operacji.'));
+  }
+});
+
+function saveKey() {
+  sessionStorage.setItem('partyAdminKey', inputKey.value.trim());
+  setStatus('Klucz zapisany na czas tej sesji.', 'ok');
+}
+
+function loadGallery() {
+  clearTimeout(galleryTimer);
+  setStatus('Ładowanie galerii…');
+
+  galleryFrame.src = 'about:blank';
+
+  setTimeout(() => {
+    galleryFrame.src = API_URL + '#admin-gallery-' + Date.now();
+    galleryTimer = setTimeout(() => setStatus('Backend nie odpowiedział.', 'err'), 12000);
+  }, 80);
+}
+
+function render() {
+  gallery.innerHTML = '';
+
+  if (!photos.length) {
+    gallery.innerHTML = '<div class="muted">Brak zdjęć.</div>';
+    return;
+  }
+
+  photos.forEach(p => {
+    const box = document.createElement('article');
+    box.className = 'item';
+
+    const img = document.createElement('img');
+    img.src = p.thumbUrl;
+    img.alt = 'Zdjęcie';
+
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+
+    const small = document.createElement('small');
+    small.textContent = p.name;
+
+    const btn = document.createElement('button');
+    btn.className = 'danger';
+    btn.textContent = 'Usuń';
+    btn.onclick = () => deleteOne(p.id);
+
+    meta.appendChild(small);
+    meta.appendChild(btn);
+    box.appendChild(img);
+    box.appendChild(meta);
+    gallery.appendChild(box);
+  });
+}
+
+async function deleteOne(fileId) {
+  if (!confirm('Usunąć to zdjęcie?')) return;
+  try {
+    setStatus('Usuwanie…');
+    await adminPost('delete', {fileId});
+    setStatus('Zdjęcie usunięte.', 'ok');
+    setTimeout(loadGallery, 500);
+  } catch (e) {
+    setStatus(e.message || e, 'err');
+  }
+}
+
+async function deleteAll() {
+  if (!photos.length) return;
+  if (!confirm('Na pewno usunąć WSZYSTKIE zdjęcia z galerii?')) return;
+
+  try {
+    setStatus('Usuwanie wszystkich zdjęć…');
+    await adminPost('deleteAll', {});
+    setStatus('Wszystkie zdjęcia zostały usunięte.', 'ok');
+    setTimeout(loadGallery, 500);
+  } catch (e) {
+    setStatus(e.message || e, 'err');
+  }
+}
+
+function adminPost(action, extra) {
+  return new Promise((resolve, reject) => {
+    const adminKey = inputKey.value.trim();
+    if (!adminKey) {
+      reject(new Error('Wpisz klucz administratora.'));
+      return;
+    }
+
+    const token = 'adm_' + Date.now() + '_' + Math.random().toString(36).slice(2);
+
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = API_URL;
+    form.target = 'adminFrame';
+    form.style.display = 'none';
+
+    const fields = {
+      action,
+      responseType: 'partyAdmin',
+      token,
+      adminKey,
+      ...extra
+    };
+
+    Object.entries(fields).forEach(([k,v]) => {
+      const el = document.createElement('input');
+      el.type = 'hidden';
+      el.name = k;
+      el.value = String(v ?? '');
+      form.appendChild(el);
+    });
+
+    document.body.appendChild(form);
+
+    const timeout = setTimeout(() => {
+      if (!pending.has(token)) return;
+      pending.delete(token);
+      form.remove();
+      reject(new Error('Backend nie odpowiedział.'));
+    }, 30000);
+
+    pending.set(token, {
+      resolve: (v) => {clearTimeout(timeout);form.remove();resolve(v)},
+      reject: (e) => {clearTimeout(timeout);form.remove();reject(e)}
+    });
+
+    form.submit();
+  });
+}
+
+function setStatus(text, type='') {
+  statusBox.className = 'status' + (type ? ' ' + type : '');
+  statusBox.textContent = text;
+}
+
+loadGallery();
+</script>
+</body>
+</html>

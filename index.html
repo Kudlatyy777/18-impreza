@@ -17,8 +17,8 @@ h1{font-size:clamp(42px,11vw,76px);line-height:.95;margin:15px 0 8px;letter-spac
 .sub{max-width:590px;margin:auto;color:var(--muted);line-height:1.5}
 .card{background:rgba(23,27,35,.96);border:1px solid var(--line);border-radius:24px;padding:18px;box-shadow:0 25px 90px rgba(0,0,0,.22)}
 .name{width:100%;background:var(--card2);border:1px solid var(--line);color:#fff;border-radius:15px;padding:14px 15px;outline:none}
-.drop{margin-top:12px;border:1.5px dashed #465061;border-radius:20px;padding:30px 18px;text-align:center;min-height:185px;display:grid;place-items:center}
-.plus{margin:auto auto 12px;background:#fff;color:#111;width:56px;height:56px;border-radius:17px;display:grid;place-items:center;font-size:30px;font-weight:500}
+.drop{margin-top:12px;border:1.5px dashed #465061;border-radius:20px;padding:30px 18px;text-align:center;min-height:185px;display:grid;place-items:center;cursor:pointer}
+.plus{margin:auto auto 12px;background:#fff;color:#111;width:56px;height:56px;border-radius:17px;display:grid;place-items:center;font-size:30px}
 .drop strong{font-size:18px;display:block;margin-bottom:6px}
 .drop small{color:var(--muted);line-height:1.45}
 .btn{width:100%;border:0;border-radius:15px;background:#fff;color:#111;padding:15px;font-weight:900;font-size:16px;margin-top:12px}
@@ -35,6 +35,7 @@ h1{font-size:clamp(42px,11vw,76px);line-height:.95;margin:15px 0 8px;letter-spac
 .tile img{width:100%;height:100%;object-fit:cover;display:block}
 .empty{grid-column:1/-1;padding:32px 18px;text-align:center;border:1px dashed var(--line);border-radius:18px;color:var(--muted)}
 footer{text-align:center;color:#697382;font-size:12px;margin-top:35px}
+.backend-frame{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;border:0}
 @media(min-width:720px){.gallery{grid-template-columns:repeat(4,1fr);gap:10px}.card{padding:22px}}
 </style>
 </head>
@@ -66,15 +67,22 @@ footer{text-align:center;color:#697382;font-size:12px;margin-top:35px}
   <div><h2>Zdjęcia gości</h2><p id="count">Ładowanie galerii…</p></div>
   <button class="refresh" onclick="loadGallery()">Odśwież</button>
 </div>
+
 <section id="gallery" class="gallery"><div class="empty">Ładowanie…</div></section>
 <footer>Zdjęcia zapisują się na Google Drive organizatora</footer>
 </main>
+
+<iframe id="galleryFrame" class="backend-frame" title="backend"></iframe>
+<iframe id="uploadFrame" name="uploadFrame" class="backend-frame" title="upload"></iframe>
 
 <script>
 const API_URL = "https://script.google.com/macros/s/AKfycby-FpvrZis2WLrO_TZJrZADTcJKA4NX8mVuNId53hehiYw83qW3apd_6yf0jiizubHc4A/exec";
 const ACCESS_KEY = "party-llRKXdaGKf";
 
 let selectedFiles = [];
+let pendingUpload = new Map();
+let galleryTimer = null;
+
 const input = document.getElementById('photos');
 const drop = document.getElementById('drop');
 const title = document.getElementById('dropTitle');
@@ -83,12 +91,31 @@ const statusBox = document.getElementById('status');
 const progress = document.getElementById('progress');
 const bar = document.getElementById('bar');
 const guestName = document.getElementById('guestName');
+const galleryFrame = document.getElementById('galleryFrame');
 
 guestName.value = localStorage.getItem('partyName') || '';
 guestName.addEventListener('input', () => localStorage.setItem('partyName', guestName.value.trim()));
 
 drop.addEventListener('click', () => input.click());
 input.addEventListener('change', () => setFiles(Array.from(input.files || [])));
+
+window.addEventListener('message', (event) => {
+  const d = event.data || {};
+
+  if (d.type === 'partyGallery') {
+    clearTimeout(galleryTimer);
+    renderGallery(d);
+    return;
+  }
+
+  if (d.type === 'partyUpload' && d.token && pendingUpload.has(d.token)) {
+    const handlers = pendingUpload.get(d.token);
+    pendingUpload.delete(d.token);
+
+    if (d.ok) handlers.resolve(d);
+    else handlers.reject(new Error(d.error || 'Błąd wysyłania zdjęcia.'));
+  }
+});
 
 function setFiles(files) {
   selectedFiles = files.filter(f => (f.type || '').startsWith('image/'));
@@ -103,43 +130,92 @@ uploadBtn.addEventListener('click', uploadAll);
 
 async function uploadAll() {
   if (!selectedFiles.length) return;
+
   uploadBtn.disabled = true;
   input.disabled = true;
   progress.classList.add('show');
   bar.style.width = '0%';
 
   let done = 0;
+
   try {
     for (let i = 0; i < selectedFiles.length; i++) {
       const file = selectedFiles[i];
       showStatus(`Przygotowuję ${i+1} z ${selectedFiles.length}: ${file.name}`);
+
       const prepared = await prepareImage(file);
 
       showStatus(`Wysyłam ${i+1} z ${selectedFiles.length}…`);
-      await postToAppsScript({
-        key: ACCESS_KEY,
-        data: prepared.dataUrl,
-        name: prepared.name,
-        mime: prepared.mime,
-        guestName: guestName.value.trim()
-      });
+      await sendUpload(prepared);
 
       done++;
       bar.style.width = Math.round(done / selectedFiles.length * 100) + '%';
     }
 
     showStatus(`Gotowe — dodano ${done} ${done === 1 ? 'zdjęcie' : 'zdjęć'} ✅`, 'ok');
+
     selectedFiles = [];
     input.value = '';
     title.textContent = 'Dodaj zdjęcia z imprezy';
-    setTimeout(loadGallery, 1200);
+
+    setTimeout(loadGallery, 700);
+
   } catch (err) {
     showStatus('Nie udało się wysłać zdjęcia: ' + (err.message || err), 'err');
+
   } finally {
     input.disabled = false;
     uploadBtn.disabled = selectedFiles.length === 0;
     setTimeout(() => progress.classList.remove('show'), 1400);
   }
+}
+
+function sendUpload(prepared) {
+  return new Promise((resolve, reject) => {
+    const token = 'up_' + Date.now() + '_' + Math.random().toString(36).slice(2);
+
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = API_URL; // BEZ żadnych ?parametrów
+    form.target = 'uploadFrame';
+    form.style.display = 'none';
+
+    const fields = {
+      action: 'upload',
+      responseType: 'partyUpload',
+      token,
+      key: ACCESS_KEY,
+      data: prepared.dataUrl,
+      name: prepared.name,
+      guestName: guestName.value.trim()
+    };
+
+    Object.entries(fields).forEach(([k,v]) => {
+      const el = document.createElement('input');
+      el.type = 'hidden';
+      el.name = k;
+      el.value = String(v ?? '');
+      form.appendChild(el);
+    });
+
+    document.body.appendChild(form);
+    pendingUpload.set(token, {resolve, reject});
+
+    const timeout = setTimeout(() => {
+      if (!pendingUpload.has(token)) return;
+      pendingUpload.delete(token);
+      reject(new Error('Backend nie odpowiedział w ciągu 45 sekund.'));
+    }, 45000);
+
+    const originalResolve = resolve;
+    const originalReject = reject;
+    pendingUpload.set(token, {
+      resolve: (v) => { clearTimeout(timeout); form.remove(); originalResolve(v); },
+      reject: (e) => { clearTimeout(timeout); form.remove(); originalReject(e); }
+    });
+
+    form.submit();
+  });
 }
 
 async function prepareImage(file) {
@@ -153,18 +229,22 @@ async function prepareImage(file) {
     const h = Math.max(1, Math.round(img.naturalHeight * scale));
 
     const canvas = document.createElement('canvas');
-    canvas.width = w; canvas.height = h;
+    canvas.width = w;
+    canvas.height = h;
+
     const ctx = canvas.getContext('2d', {alpha:false});
     ctx.drawImage(img, 0, 0, w, h);
 
     return {
-      dataUrl: canvas.toDataURL('image/jpeg', .86),
-      mime: 'image/jpeg',
+      dataUrl: canvas.toDataURL('image/jpeg', .84),
       name: file.name.replace(/\.[^.]+$/, '') + '.jpg'
     };
+
   } catch (e) {
-    if (file.size > 20 * 1024 * 1024) throw new Error('Zdjęcie przekracza 20 MB.');
-    return {dataUrl: original, mime: file.type || 'image/jpeg', name: file.name};
+    if (file.size > 20 * 1024 * 1024) {
+      throw new Error('Zdjęcie przekracza 20 MB.');
+    }
+    return {dataUrl: original, name: file.name};
   }
 }
 
@@ -186,130 +266,76 @@ function loadImage(src) {
   });
 }
 
-function postToAppsScript(fields) {
-  return new Promise((resolve, reject) => {
-    const frameName = 'upload_' + Date.now() + '_' + Math.random().toString(36).slice(2);
-    const iframe = document.createElement('iframe');
-    iframe.name = frameName;
-    iframe.style.display = 'none';
-
-    const form = document.createElement('form');
-    form.method = 'POST';
-    form.action = API_URL;
-    form.target = frameName;
-    form.style.display = 'none';
-    form.enctype = 'application/x-www-form-urlencoded';
-
-    Object.entries(fields).forEach(([k,v]) => {
-      const inp = document.createElement('input');
-      inp.type = 'hidden';
-      inp.name = k;
-      inp.value = v == null ? '' : String(v);
-      form.appendChild(inp);
-    });
-
-    let submitted = false;
-    let timer;
-
-    iframe.onload = () => {
-      if (!submitted) return;
-      clearTimeout(timer);
-      setTimeout(() => {
-        iframe.remove();
-        form.remove();
-        resolve();
-      }, 250);
-    };
-
-    document.body.appendChild(iframe);
-    document.body.appendChild(form);
-
-    setTimeout(() => {
-      submitted = true;
-      form.submit();
-      timer = setTimeout(() => {
-        iframe.remove();
-        form.remove();
-        reject(new Error('Przekroczono czas wysyłania.'));
-      }, 45000);
-    }, 120);
-  });
-}
-
 function loadGallery() {
   const gallery = document.getElementById('gallery');
   const count = document.getElementById('count');
-  const cb = 'galleryCb_' + Date.now() + '_' + Math.random().toString(36).slice(2);
-  const script = document.createElement('script');
 
-  let finished = false;
-  const timer = setTimeout(() => {
-    if (finished) return;
-    finished = true;
-    cleanup();
-    count.textContent = 'Nie udało się połączyć z galerią';
-    gallery.innerHTML = '<div class="empty">Spróbuj odświeżyć za chwilę.</div>';
-  }, 12000);
+  clearTimeout(galleryTimer);
+  count.textContent = 'Ładowanie galerii…';
 
-  function cleanup() {
-    clearTimeout(timer);
-    try { delete window[cb]; } catch(e) {}
-    script.remove();
+  // Fragment po # nie jest wysyłany do Apps Script.
+  // Dzięki temu serwer dostaje CZYSTE /exec bez ?parametrów.
+  galleryFrame.src = 'about:blank';
+
+  setTimeout(() => {
+    galleryFrame.src = API_URL + '#gallery-' + Date.now();
+
+    galleryTimer = setTimeout(() => {
+      count.textContent = 'Brak połączenia';
+      gallery.innerHTML = '<div class="empty">Backend nie odpowiedział. Spróbuj odświeżyć za chwilę.</div>';
+    }, 12000);
+  }, 80);
+}
+
+function renderGallery(payload) {
+  const gallery = document.getElementById('gallery');
+  const count = document.getElementById('count');
+
+  if (!payload || !payload.ok) {
+    count.textContent = 'Błąd ładowania';
+    gallery.innerHTML = '<div class="empty">' + escapeHtml(payload?.error || 'Nie udało się wczytać galerii.') + '</div>';
+    return;
   }
 
-  window[cb] = payload => {
-    if (finished) return;
-    finished = true;
-    cleanup();
+  const photos = payload.photos || [];
 
-    if (!payload || !payload.ok) {
-      count.textContent = 'Błąd ładowania';
-      gallery.innerHTML = '<div class="empty">Nie udało się wczytać galerii.</div>';
-      return;
-    }
+  count.textContent = photos.length
+    ? `${photos.length} ${photos.length === 1 ? 'zdjęcie' : 'zdjęć'}`
+    : 'Jeszcze nikt nic nie dodał';
 
-    const photos = payload.photos || [];
-    count.textContent = photos.length
-      ? `${photos.length} ${photos.length === 1 ? 'zdjęcie' : 'zdjęć'}`
-      : 'Jeszcze nikt nic nie dodał';
+  if (!photos.length) {
+    gallery.innerHTML = '<div class="empty">Pierwsze zdjęcie może być Twoje 🙂</div>';
+    return;
+  }
 
-    if (!photos.length) {
-      gallery.innerHTML = '<div class="empty">Pierwsze zdjęcie może być Twoje 🙂</div>';
-      return;
-    }
+  gallery.innerHTML = '';
 
-    gallery.innerHTML = '';
-    photos.forEach(p => {
-      const div = document.createElement('div');
-      div.className = 'tile';
-      const img = document.createElement('img');
-      img.loading = 'lazy';
-      img.alt = 'Zdjęcie z imprezy';
-      img.src = p.thumbUrl;
-      div.appendChild(img);
-      gallery.appendChild(div);
-    });
-  };
+  photos.forEach(p => {
+    const a = document.createElement('a');
+    a.className = 'tile';
+    a.href = p.viewUrl || '#';
+    a.target = '_blank';
+    a.rel = 'noopener';
 
-  script.onerror = () => {
-    if (finished) return;
-    finished = true;
-    cleanup();
-    count.textContent = 'Błąd połączenia';
-    gallery.innerHTML = '<div class="empty">Nie udało się połączyć z galerią.</div>';
-  };
+    const img = document.createElement('img');
+    img.loading = 'lazy';
+    img.alt = 'Zdjęcie z imprezy';
+    img.src = p.thumbUrl;
 
-  script.src = API_URL +
-    '?action=gallery&key=' + encodeURIComponent(ACCESS_KEY) +
-    '&callback=' + encodeURIComponent(cb) +
-    '&_=' + Date.now();
-
-  document.body.appendChild(script);
+    a.appendChild(img);
+    gallery.appendChild(a);
+  });
 }
 
 function showStatus(text, type='') {
   statusBox.className = 'status' + (text ? ' show' : '') + (type ? ' ' + type : '');
   statusBox.textContent = text;
+}
+
+function escapeHtml(s) {
+  return String(s || '').replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'
+  }[c]));
 }
 
 loadGallery();

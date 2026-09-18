@@ -35,7 +35,6 @@ button.danger{background:#32191d;border-color:#633039;color:#ffb0b0}
     <input id="adminKey" type="password" placeholder="Klucz administratora">
     <button onclick="saveKey()">Zapamiętaj na tym urządzeniu</button>
     <button onclick="loadGallery()">Odśwież</button>
-    <button class="danger" onclick="deleteAll()">Usuń wszystkie zdjęcia</button>
   </div>
   <div id="status" class="status">Ładowanie galerii…</div>
 </section>
@@ -139,20 +138,6 @@ async function deleteOne(fileId) {
     setStatus('Usuwanie…');
     await adminPost('delete', {fileId});
     setStatus('Zdjęcie usunięte.', 'ok');
-    setTimeout(loadGallery, 500);
-  } catch (e) {
-    setStatus(e.message || e, 'err');
-  }
-}
-
-async function deleteAll() {
-  if (!photos.length) return;
-  if (!confirm('Na pewno usunąć WSZYSTKIE zdjęcia z galerii?')) return;
-
-  try {
-    setStatus('Usuwanie wszystkich zdjęć…');
-    await adminPost('deleteAll', {});
-    setStatus('Wszystkie zdjęcia zostały usunięte.', 'ok');
     setTimeout(loadGallery, 500);
   } catch (e) {
     setStatus(e.message || e, 'err');
